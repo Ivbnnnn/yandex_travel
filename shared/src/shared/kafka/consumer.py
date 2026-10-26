@@ -1,17 +1,15 @@
-import uuid
 import logging
+import uuid
 from typing import ClassVar
 
 from aiokafka import AIOKafkaConsumer
 from pydantic import BaseModel
-
+from shared.db.models.inbox import InboxEvent
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
 )
-
-from shared.db.models.inbox import InboxEvent
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +29,7 @@ class BaseConsumer:
         self._consumer: AIOKafkaConsumer | None = None
 
     async def start(self, topic: str | None = None) -> None:
-        resolved_topic = (
-            topic if topic is not None else self.topic
-        )
+        resolved_topic = topic if topic is not None else self.topic
 
         if resolved_topic is None:
             raise ValueError("Kafka topic is not specified")
@@ -46,9 +42,7 @@ class BaseConsumer:
             bootstrap_servers=self._bootstrap_servers,
             group_id=self.group_id,
             enable_auto_commit=False,
-            value_deserializer=(
-                self.event_schema.model_validate_json
-            ),
+            value_deserializer=(self.event_schema.model_validate_json),
         )
 
         await self._consumer.start()
@@ -69,7 +63,6 @@ class BaseConsumer:
 
             async with self._session_factory() as session:
                 async with session.begin():
-
                     stmt = (
                         insert(InboxEvent)
                         .values(
@@ -101,9 +94,7 @@ class BaseConsumer:
         session: AsyncSession,
         event: BaseModel,
     ) -> None:
-        raise NotImplementedError(
-            "Implement handle() in subclass"
-        )
+        raise NotImplementedError("Implement handle() in subclass")
 
     async def stop(self) -> None:
         if self._consumer is not None:

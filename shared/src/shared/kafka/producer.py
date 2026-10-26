@@ -1,33 +1,33 @@
-from aiokafka import AIOKafkaProducer
-from pydantic import BaseModel
-from typing import ClassVar
 import uuid
+from typing import ClassVar
+
+from aiokafka import AIOKafkaProducer
 from aiokafka.structs import RecordMetadata
+from pydantic import BaseModel
+
 
 class BaseProducer:
     """Base class for kafka producer"""
 
-    topic:ClassVar[str|None] = None
+    topic: ClassVar[str | None] = None
 
-    def __init__(self, bootstrap_servers:str):
+    def __init__(self, bootstrap_servers: str):
         self._producer = AIOKafkaProducer(
             bootstrap_servers=bootstrap_servers,
             value_serializer=self._serialize,
             key_serializer=lambda key: key.encode(),
-            enable_idempotence=True
+            enable_idempotence=True,
         )
 
     @classmethod
-    def _serialize(value:BaseModel) -> bytes:
+    def _serialize(value: BaseModel) -> bytes:
         return value.model_dump_json().encode()
 
     async def start(self) -> None:
         await self._producer.start()
-    
-    
+
     async def stop(self) -> None:
         await self._producer.stop()
-
 
     async def publish(
         self,
@@ -36,9 +36,7 @@ class BaseProducer:
         key: str | None = None,
         event_id: uuid.UUID | None = None,
     ) -> RecordMetadata:
-        resolved_topic = (
-            topic if topic is not None else self.topic
-        )
+        resolved_topic = topic if topic is not None else self.topic
 
         if resolved_topic is None:
             raise ValueError("Topic cannot be None")
@@ -53,4 +51,3 @@ class BaseProducer:
                 ("event_id", str(event_id).encode()),
             ],
         )
-

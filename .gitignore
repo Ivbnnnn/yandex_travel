@@ -9,3 +9,6 @@ __pycache__/
 build/
 dist/
 .env
+.env.local
+.local/
+.test-tmp*/

@@ -2,6 +2,7 @@
 # описываются в его собственном pyproject.toml.
 
 [tool.ruff]
+target-version = "py312"
 line-length = 100
 extend-exclude = ["**/alembic/versions"]
 
@@ -12,7 +13,9 @@ select = ["E4", "E7", "E9", "F", "I", "B"]
 plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "shared", "services"]
+testpaths = ["tests"]
+pythonpath = ["shared/src", "user_service/src", "gateway/src"]
+asyncio_mode = "auto"
 python_files = ["test_*.py"]
 addopts = "-ra --strict-markers --import-mode=importlib"
 markers = [

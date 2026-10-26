@@ -29,9 +29,7 @@ class OutboxPublisher:
             async with session.begin():
                 stmt = (
                     select(OutboxEvent)
-                    .where(
-                        OutboxEvent.published_at.is_(None)
-                    )
+                    .where(OutboxEvent.published_at.is_(None))
                     .order_by(OutboxEvent.created_at)
                     .limit(self.batch_size)
                     .with_for_update(skip_locked=True)
@@ -47,8 +45,6 @@ class OutboxPublisher:
                         value=event.payload,
                     )
 
-                    event.published_at = datetime.now(
-                        timezone.utc
-                    )
+                    event.published_at = datetime.now(timezone.utc)
 
                 return len(events)
