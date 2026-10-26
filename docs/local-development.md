@@ -1,60 +1,81 @@
-# Локальный запуск
+# Запуск и API монолита
 
-Из корня репозитория:
-
-```powershell
-Copy-Item .env.example .env
-docker compose up --build -d
-docker compose ps
-```
-
-Для запуска Python-сервисов из корневого `.venv` установите локальные пакеты:
+## Docker Compose
 
 ```powershell
-.\.venv\Scripts\python -m pip install -e ./shared -e ./services/gateway -e ./services/identity_service
+python tools/setup_local.py
+docker compose --env-file .env.monolith up --build -d
+docker compose --env-file .env.monolith ps
+docker compose --env-file .env.monolith logs --tail 100 app
 ```
 
-`docker compose` запускает:
+API: http://localhost:8000/api/v1. Swagger: /docs. Healthcheck: /health.
+Администратор: ADMIN_EMAIL и ADMIN_PASSWORD из .env.monolith.
 
-| Контейнер | Назначение | Адрес на компьютере |
+## Локальный Python
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe tools/setup_local.py
+docker compose --env-file .env.monolith up -d postgres
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+```
+
+Не запускайте одновременно Docker app и локальный uvicorn на одном порту.
+DATABASE_URL для локального Python берётся из .env.monolith; для контейнера Compose
+подставляет адрес postgres. Основная конфигурация монолита не читает .env.local.
+
+## Основные API
+
+Все пути ниже имеют префикс /api/v1.
+
+| Методы | Путь | Доступ |
 | --- | --- | --- |
-| `postgres` | БД `travel_identity`, отдельная роль `identity_service` | `localhost:55432` |
-| `kafka` | Один KRaft-брокер; внутри сети доступен как `kafka:19092` | `localhost:9092` |
-| `kafka-init` | Однократно создаёт `identity.events.v1` и `analytics.events.v1` | — |
-| `identity-migrate` | Однократно применяет миграции Alembic | — |
-| `identity-service` | Регистрация, вход, refresh, профиль и избранное | `http://localhost:8001` |
-| `identity-outbox` | Отправляет события из таблицы outbox в Kafka | — |
-| `gateway` | Публичные `/api/v1/*` и событие сброса фильтров | `http://localhost:8000` |
+| POST | /auth/register, /auth/login | Публичный, разрешённый Origin |
+| POST | /auth/refresh, /auth/logout | Refresh cookie, Origin, X-CSRF-Token |
+| GET, PATCH, DELETE | /users/me | Пользователь; DELETE деактивирует |
+| GET | /filters, /hotels, /hotels/search | Гость |
+| GET | /hotels/compare?hotel_ids=UUID&hotel_ids=UUID | Гость; 2–3 разных отеля |
+| GET | /hotels/{id}, /hotels/{id}/rooms, /rooms/{id}, /rooms/{id}/rates | Гость |
+| POST | /hotels, /hotels/{id}/rooms, /rooms/{id}/rates | Администратор |
+| PATCH, DELETE | /hotels/{id}, /rooms/{id}, /rates/{id} | Администратор; DELETE деактивирует |
+| POST | /hotels/{id}/photos, /rooms/{id}/photos | Администратор |
+| POST | /favorites | Пользователь; hotel_id в теле |
+| GET | /users/me/favorites, /favorites/{id} | Владелец |
+| DELETE | /favorites/{id} | Владелец |
+| POST | /bookings | Пользователь; Idempotency-Key |
+| GET | /bookings/{id}, /users/me/bookings | Владелец |
+| POST | /bookings/{id}/cancel | Владелец |
+| POST | /payments | Владелец; Idempotency-Key; только demo |
+| GET | /payments/{id} | Владелец; обновление статуса демоплатежа |
+| POST | /hotels/{id}/reviews | Владелец завершённого проживания |
+| GET | /users/me/notifications | Пользователь |
+| PATCH | /notifications/{id}/read | Владелец |
+| POST | /analytics/events | Публичный; только reset_filters |
 
-PostgreSQL и Kafka хранят данные в именованных томах `postgres_data` и `kafka_data`.
-Обычный `docker compose down` их сохраняет. Инициализация роли и базы PostgreSQL
-выполняется при первом создании пустого тома.
+Query поиска: city, check_in, check_out, guests_count, rooms_count,
+interior_style, booking_purpose, tags, sort, page, limit. Для мультивыбора повторяйте
+параметры: interior_style=light&interior_style=loft. Значения справочников — /filters.
+Внутри одной группы используется OR, между группами AND. Условия номера относятся
+к одной категории. total считает отели после проверки доступности до пагинации.
 
-Проверка запуска:
+У /hotels/search обязательны city и обе даты. /hotels позволяет просматривать каталог
+без дат. Невалидные поля дают 422, отсутствие объекта — 404, чужой объект — 403,
+конфликт состояния или занятого остатка — 409. Тело бизнес-ошибки: code и detail.
 
-```powershell
-curl.exe http://localhost:8000/health/live
-curl.exe http://localhost:8001/health/ready
-```
+Для POST/PATCH/DELETE с cookies передавайте Origin: http://localhost:8000
+и X-CSRF-Token со значением csrf_token. Login/register требуют Origin без CSRF.
+Swagger, открытый на localhost:8000, получает cookies после успешного login.
+Bearer доступен для access JWT; при явном Bearer заголовке CSRF не требуется.
 
-Пример регистрации через gateway:
+В login принимаются email/password. В register дополнительно name и необязательный
+phone. Ответ не содержит пароль или хеш. Права администратора нельзя задать через
+register или PATCH профиля.
 
-```powershell
-curl.exe -X POST http://localhost:8000/api/v1/auth/register `
-  -H "Content-Type: application/json" `
-  -d '{"email":"user@example.com","password":"change-this-password"}'
-```
+## Выбранные упрощения
 
-Реализованные маршруты identity: `POST /auth/register`, `/auth/login`,
-`/auth/refresh`, `/auth/logout`, `GET /users/me`, `DELETE /users/me`,
-`GET/POST /users/me/favorites` и `DELETE /users/me/favorites/{hotel_id}`.
-Все они доступны через gateway с префиксом `/api/v1`.
-`logout` отзывает refresh-сессию; уже выданный access-токен действует до истечения срока
-(по умолчанию 15 минут). Деактивация пользователя закрывает доступ сразу.
-
-Каталог пока не реализован. Добавление отеля в избранное проверяет его через catalog
-и до запуска catalog-service вернёт `503`. Запросы gateway к ещё не созданным
-catalog, search, booking, payment и notification также вернут `502`.
-
-Настройки `.env.example` предназначены только для локального стенда. Перед запуском
-в другом окружении замените пароли и `IDENTITY_JWT_SECRET`.
+Демооплата вместо эквайринга; in-app уведомления вместо email/SMS; один тип валюты RUB;
+категория номеров со stock; создание схемы на старте вместо миграций; один процесс.
+Тестов нет — их добавляет тестировщик. Данные и воспроизводимый сценарий доступны
+через API и Swagger. Полная схема слоёв и ограничений — в [README](../README.md).

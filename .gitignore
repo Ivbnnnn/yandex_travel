@@ -9,3 +9,7 @@ __pycache__/
 build/
 dist/
 .env
+.env.local
+.env.monolith
+.local/
+.test-tmp*/

@@ -1,148 +1,47 @@
 services:
-  # PostgreSQL stores identity data and the identity outbox.
   postgres:
     image: postgres:17.11
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: postgres
-      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?Set IDENTITY_DB_PASSWORD in .env}
+      POSTGRES_USER: travel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run tools/setup_local.py}
+      POSTGRES_DB: travel_mvp
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+      - monolith_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U travel -d travel_mvp"]
+      interval: 3s
       timeout: 3s
       retries: 20
 
-  # Single KRaft broker. localhost:9092 is for the host; kafka:19092 is for containers.
-  kafka:
-    image: apache/kafka:4.1.2
-    hostname: kafka
-    ports:
-      - "127.0.0.1:9092:9092"
+  app:
+    build: .
+    image: yandex-travel-monolith:local
     environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENERS: CONTROLLER://:29093,HOST://:9092,INTERNAL://:19092
-      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,INTERNAL://kafka:19092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,HOST:PLAINTEXT,INTERNAL:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:19092 >/dev/null 2>&1"]
-      interval: 10s
-      timeout: 10s
-      retries: 20
-      start_period: 20s
-
-  # Create only the streams published by services present in this repository.
-  kafka-init:
-    image: apache/kafka:4.1.2
-    depends_on:
-      kafka:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >-
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092
-        --create --if-not-exists --topic identity.events.v1 --partitions 3
-        --replication-factor 1 &&
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092
-        --create --if-not-exists --topic analytics.events.v1 --partitions 3
-        --replication-factor 1
-    restart: "no"
-
-  # One-shot migration runs before the API and the outbox publisher.
-  identity-migrate:
-    build:
-      context: .
-      dockerfile: services/identity_service/Dockerfile
-    image: yandex-travel-identity:local
-    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
-    environment: &identity-environment
-      IDENTITY_DATABASE_URL: postgresql+asyncpg://identity_service:${IDENTITY_DB_PASSWORD:?Set IDENTITY_DB_PASSWORD in .env}@postgres:5432/travel_identity
-      IDENTITY_JWT_SECRET: ${IDENTITY_JWT_SECRET:?Set IDENTITY_JWT_SECRET in .env}
-      IDENTITY_CATALOG_URL: http://catalog-service:8000
-      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
-      KAFKA_CLIENT_ID: identity-outbox
+      DATABASE_URL: postgresql+asyncpg://travel:${POSTGRES_PASSWORD}@postgres:5432/travel_mvp
+      JWT_SECRET: ${JWT_SECRET:?Run tools/setup_local.py}
+      CSRF_SECRET: ${CSRF_SECRET:?Run tools/setup_local.py}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Run tools/setup_local.py}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      SEED_DATA: ${SEED_DATA:-true}
+      DEMO_PAYMENTS: ${DEMO_PAYMENTS:-true}
+      TIMEZONE: ${TIMEZONE:-Europe/Moscow}
+      ACCESS_TTL_SECONDS: ${ACCESS_TTL_SECONDS:-900}
+      REFRESH_TTL_SECONDS: ${REFRESH_TTL_SECONDS:-2592000}
+      HOLD_TTL_SECONDS: ${HOLD_TTL_SECONDS:-900}
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
-    restart: "no"
-
-  # Identity HTTP API: registration, login, refresh, profile and favorites.
-  identity-service:
-    build:
-      context: .
-      dockerfile: services/identity_service/Dockerfile
-    image: yandex-travel-identity:local
-    environment: *identity-environment
-    ports:
-      - "127.0.0.1:8001:8000"
-    depends_on:
-      identity-migrate:
-        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=2)"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  # Dedicated publisher; it never shares an HTTP worker process.
-  identity-outbox:
-    build:
-      context: .
-      dockerfile: services/identity_service/Dockerfile
-    image: yandex-travel-identity:local
-    command: ["python", "-m", "identity_service.outbox_worker"]
-    environment: *identity-environment
-    depends_on:
-      identity-migrate:
-        condition: service_completed_successfully
-      kafka-init:
-        condition: service_completed_successfully
-
-  # Public entry point. Catalog/search/booking/payment routes are wired for future services.
-  gateway:
-    build:
-      context: .
-      dockerfile: services/gateway/Dockerfile
-    image: yandex-travel-gateway:local
-    environment:
-      GATEWAY_IDENTITY_URL: http://identity-service:8000
-      GATEWAY_CATALOG_URL: http://catalog-service:8000
-      GATEWAY_SEARCH_URL: http://search-service:8000
-      GATEWAY_BOOKING_URL: http://booking-service:8000
-      GATEWAY_PAYMENT_URL: http://payment-service:8000
-      GATEWAY_NOTIFICATION_URL: http://notification-service:8000
-      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
-      KAFKA_CLIENT_ID: travel-gateway
-    ports:
-      - "127.0.0.1:8000:8000"
-    depends_on:
-      identity-service:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=2)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
       interval: 5s
       timeout: 3s
       retries: 20
 
 volumes:
-  postgres_data:
-  kafka_data:
+  monolith_postgres_data:

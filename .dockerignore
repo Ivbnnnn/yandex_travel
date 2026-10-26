@@ -1,11 +1,14 @@
 .git
 .venv
+.local
 .tmp
 __pycache__
+**/__pycache__
 *.py[cod]
 .pytest_cache
-.mypy_cache
 .ruff_cache
-*.egg-info
 .env
+.env.local
+.env.monolith
 tests
+docs
