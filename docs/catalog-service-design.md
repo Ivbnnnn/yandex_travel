@@ -97,11 +97,14 @@ BaseRepository, базовую конфигурацию, HTTP-фабрику, о
 | Модель | Основные поля |
 | --- | --- |
 | Hotel | id, name, description, city, address, latitude, longitude, rating, tags, is_active, created_at, updated_at |
+| Rating | id, hotel_id, user_id, value, description |
 | Room | id, hotel_id, name, description, capacity, price, tags, is_active, created_at, updated_at |
 | Rate | id, room_id, name, price, currency, breakfast_included, cancellation_policy, conditions, is_active |
 | Photo | id, hotel_id или room_id, url, sort_order |
 | InteriorStyle | id, code, name, is_active |
 | BookingPurpose | id, code, name, is_active |
+| RoomInteriorStyles| id, room_id, style_id |
+| RoomInteriorPurposes| id, room_id, purpose_id |
 
 Связи Hotel → Room и Room → Rate — один ко многим, с внешними ключами в БД каталога.
 Цена хранится как NUMERIC/Decimal. Для MVP можно зафиксировать RUB и цену за ночь.

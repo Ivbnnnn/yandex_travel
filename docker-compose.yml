@@ -27,6 +27,18 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+  catalog-migrate:
+    build:
+      context: .
+      dockerfile: catalog_service/Dockerfile
+    image: yandex-travel-catalog-migrate:local
+    command: ["alembic", "-c", "/app/catalog_service/alembic.ini", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://catalog_service:${POSTGRES_PASSWORD}@postgres:5432/catalog_service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   user-service:
     build:
