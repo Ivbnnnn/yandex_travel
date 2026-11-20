@@ -50,15 +50,6 @@ export default function HotelPage() {
         </div>
       </div>
 
-      <div className="grid h-72 gap-2 overflow-hidden rounded-2xl sm:h-96 sm:grid-cols-4 sm:grid-rows-2">
-        {(photos.length < 3 ? [0] : [0, 1, 2, 3, 4]).map((i) => (
-          <Photo
-            key={i} src={photos[i]?.url} seed={h.hotel_id + i} alt={h.name}
-            className={`size-full ${photos.length < 3 ? 'sm:col-span-4 sm:row-span-2' : i === 0 ? 'sm:col-span-2 sm:row-span-2' : 'hidden sm:grid'}`}
-          />
-        ))}
-      </div>
-
       <div className="flex flex-wrap gap-1.5">{h.tags.map((t) => <Tag key={t}>{t}</Tag>)}</div>
       <p className="max-w-3xl text-[17px] leading-relaxed">{h.description}</p>
 

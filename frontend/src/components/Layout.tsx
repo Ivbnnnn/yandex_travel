@@ -14,7 +14,7 @@ export function Layout() {
       <header className="sticky top-0 z-40 border-b border-line bg-white">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-2 px-4">
           <Link to="/" className="mr-4 flex items-center gap-2 text-lg font-extrabold tracking-tight">
-            <span className="grid size-8 place-items-center rounded-lg bg-accent">П</span>
+            <span className="grid size-8 place-items-center rounded-lg bg-accent">Я</span>
             Путешествия
           </Link>
           <nav className="flex flex-1 items-center gap-1">
