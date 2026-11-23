@@ -1,0 +1,114 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ci:
+    name: Lint and integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      COMPOSE_FILE: docker-compose.yml:deploy/compose.vps.yml
+      APP_IMAGE_TAG: ci
+      NGINX_PUBLISH: '127.0.0.1:8080'
+      ALLOWED_ORIGINS: '["http://127.0.0.1:8080"]'
+      TEST_API_URL: http://127.0.0.1:8080
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install development dependencies
+        run: python -m pip install '.[dev]'
+      - name: Run Ruff
+        run: python -m ruff check --output-format=github .
+      - name: Start Nginx, FastAPI and PostgreSQL
+        run: |
+          python tools/setup_local.py
+          docker compose --env-file .env.monolith up --build --wait --wait-timeout 150
+      - name: Run integration tests
+        run: python -m pytest -q
+      - name: Show service logs on failure
+        if: failure() && hashFiles('.env.monolith') != ''
+        run: docker compose --env-file .env.monolith logs --no-color --tail 100
+      - name: Stop test services
+        if: always() && hashFiles('.env.monolith') != ''
+        run: docker compose --env-file .env.monolith down --volumes
+
+  deploy:
+    name: Deploy main to VPS
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: production
+    concurrency:
+      group: production-vps
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Check that the commit is still at the tip of main
+        id: main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [[ "$main_sha" == "$GITHUB_SHA" ]]; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Skipping deployment because main has advanced.'
+          fi
+      - name: Upload and deploy over SSH
+        if: steps.main.outputs.deploy == 'true'
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          if [[ ! "$VPS_HOST" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ||
+                ! "$VPS_USER" =~ ^[a-z_][a-z0-9_-]*$ ||
+                -z "$VPS_SSH_KEY" || -z "$VPS_KNOWN_HOSTS" ]]; then
+            echo 'Set all four VPS secrets. VPS_HOST must be a public IPv4 address.' >&2
+            exit 1
+          fi
+
+          umask 077
+          ssh_dir=$(mktemp -d "$RUNNER_TEMP/vps-ssh.XXXXXX")
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          printf '%s\n' "$VPS_SSH_KEY" | tr -d '\r' > "$ssh_dir/key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" | tr -d '\r' > "$ssh_dir/known_hosts"
+
+          git archive --format=tar.gz "$GITHUB_SHA" |
+            ssh -T -i "$ssh_dir/key" -l "$VPS_USER" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o "UserKnownHostsFile=$ssh_dir/known_hosts" -o GlobalKnownHostsFile=/dev/null \
+              -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+              "$VPS_HOST" "set -eu; umask 077; cd /srv/yandex-travel
+                release=\$(mktemp -d releases/$GITHUB_SHA.XXXXXX)
+                tar -xzf - -C \"\$release\"
+                flock -w 180 .deploy.lock bash \"\$release/deploy/release.sh\" \"\$PWD/\$release\""
+
+          health=$(curl --fail --silent --show-error --max-time 10 "http://$VPS_HOST/health")
+          if [[ "$health" != '{"status":"ok"}' ]]; then
+            echo 'Unexpected response from the public health endpoint.' >&2
+            exit 1
+          fi
+          echo 'Public health check passed.'
