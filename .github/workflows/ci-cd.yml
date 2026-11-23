@@ -37,12 +37,14 @@ jobs:
         run: python -m pip install '.[dev]'
       - name: Run Ruff
         run: python -m ruff check --output-format=github .
-      - name: Start Nginx, FastAPI and PostgreSQL
+      - name: Lint and build React, then start the application
         run: |
           python tools/setup_local.py
           docker compose --env-file .env.monolith up --build --wait --wait-timeout 150
       - name: Run integration tests
         run: python -m pytest -q
+      - name: Check the frontend and API through Nginx
+        run: bash deploy/check.sh "$TEST_API_URL"
       - name: Show service logs on failure
         if: failure() && hashFiles('.env.monolith') != ''
         run: docker compose --env-file .env.monolith logs --no-color --tail 100
@@ -106,9 +108,4 @@ jobs:
                 tar -xzf - -C \"\$release\"
                 flock -w 180 .deploy.lock bash \"\$release/deploy/release.sh\" \"\$PWD/\$release\""
 
-          health=$(curl --fail --silent --show-error --max-time 10 "http://$VPS_HOST/health")
-          if [[ "$health" != '{"status":"ok"}' ]]; then
-            echo 'Unexpected response from the public health endpoint.' >&2
-            exit 1
-          fi
-          echo 'Public health check passed.'
+          bash deploy/check.sh "http://$VPS_HOST"

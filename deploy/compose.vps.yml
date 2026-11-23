@@ -17,7 +17,8 @@ services:
         max-file: "3"
 
   nginx:
-    image: nginx:1.30.7-alpine
+    build: ./frontend
+    image: yandex-travel-frontend:${APP_IMAGE_TAG:?Set the release image tag}
     ports:
       - "${NGINX_PUBLISH:-0.0.0.0:80}:80"
     volumes:

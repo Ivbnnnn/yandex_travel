@@ -10,5 +10,6 @@ __pycache__
 .env
 .env.local
 .env.monolith
+frontend
 tests
 docs

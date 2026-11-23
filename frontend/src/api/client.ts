@@ -80,12 +80,18 @@ export function errMsg(e: unknown): string {
   return 'Не удалось выполнить запрос. Проверьте, что бэк запущен.'
 }
 
+export function newIdempotencyKey(): string {
+  // getRandomValues is available on the HTTP demo deployment.
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 // Один и тот же запрос брони → тот же Idempotency-Key (повтор не создаст дубль)
 export function idemKey(scope: string, body: unknown, fresh = false): string {
   const k = `idem:${scope}:${JSON.stringify(body)}`
   let v = fresh ? null : sessionStorage.getItem(k)
   if (!v) {
-    v = crypto.randomUUID()
+    v = newIdempotencyKey()
     sessionStorage.setItem(k, v)
   }
   return v

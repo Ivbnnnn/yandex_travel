@@ -15,13 +15,11 @@ compose() {
 
 previous=$(readlink -e "$root/current" || true)
 compose "$release" config --quiet
-compose "$release" pull --policy missing nginx
-compose "$release" build app
+compose "$release" build app nginx
 ln -s "$release" "$release/next-current"
 
 if compose "$release" up -d --no-build --wait --wait-timeout 150 &&
-    health=$(curl --fail --silent --show-error --max-time 10 http://127.0.0.1/health) &&
-    [[ "$health" == '{"status":"ok"}' ]] &&
+    bash "$release/deploy/check.sh" http://127.0.0.1 &&
     mv -Tf "$release/next-current" "$root/current"; then
     echo "Deployed $(basename "$release")"
     exit 0

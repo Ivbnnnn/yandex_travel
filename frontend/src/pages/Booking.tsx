@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, errMsg } from '../api/client'
+import { api, errMsg, newIdempotencyKey } from '../api/client'
 import { useBooking } from '../api/hooks'
 import type { Booking, Payment } from '../api/types'
 import { dateRu, money, nightsBetween, nightsText } from '../lib/format'
@@ -53,7 +53,7 @@ function PayPanel({ booking }: { booking: Booking }) {
       let p = await api<Payment>('/payments', {
         method: 'POST',
         body: { booking_id: booking.booking_id, payment_method: 'demo', payment_token: token },
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: newIdempotencyKey(),
       })
       // 202 / pending: опрашиваем статус платежа
       for (let i = 0; p.status === 'pending' && i < 20; i++) {
